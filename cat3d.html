@@ -2,10 +2,12 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>3D黒猫サイネージ — リグ付き</title>
 <style>
   * { margin: 0; padding: 0; }
-  body { background: #0a0a15; overflow: hidden; }
+  html, body { width: 100%; height: 100%; }
+  body { background: #0a0a15; overflow: hidden; touch-action: none; }
   #info {
     position: fixed; bottom: 10px; left: 10px;
     color: #444; font: 10px monospace; z-index: 10;
@@ -14,10 +16,18 @@
     position: fixed; top: 10px; left: 10px;
     color: #D4A537; font: 12px monospace; z-index: 10;
   }
+  #loading {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: #D4A537; font: 16px 'Zen Kaku Gothic New', sans-serif; z-index: 100;
+    text-align: center;
+  }
+  #loading .spinner { font-size: 32px; animation: spin 1.5s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
-<div id="info">click: 近づく / dblclick: ジャンプ / move: 目線追従</div>
+<div id="loading"><div class="spinner">🐱</div><br>読み込み中...</div>
+<div id="info">tap: 近づく / double tap: ジャンプ</div>
 <div id="state"></div>
 
 <script type="importmap">
@@ -179,6 +189,10 @@ async function loadCat() {
   // idle開始（idleアニメがない場合はボーン補正で立たせる）
   playAnimation('idle');
   console.log('猫読み込み完了', Object.keys(animations), 'ボーン:', Object.keys(catBones));
+
+  // ローディング非表示
+  const el = document.getElementById('loading');
+  if (el) el.remove();
 }
 loadCat();
 
