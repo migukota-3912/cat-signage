@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>猫サイネージ v3 — Mixamoアニメーション</title>
+<style>
+  * { margin: 0; padding: 0; }
+  body { background: #0a0a15; overflow: hidden; cursor: pointer; }
+  #info {
+    position: fixed; bottom: 10px; left: 10px;
+    color: #444; font: 10px monospace; z-index: 10;
+  }
+  #state {
+    position: fixed; top: 10px; left: 10px;
+    color: #D4A537; font: 14px monospace; z-index: 10;
+  }
+</style>
+</head>
+<body>
+<div id="info">click: 近づく / space: ジャンプ / dblclick: 手を振る</div>
+<div id="state"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ===== シーン =====
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x2D7DD2);
+scene.fog = new THREE.Fog(0x2D7DD2, 15, 40);
+
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 2, 18);
+camera.lookAt(0, 0.8, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+// ===== ライティング =====
+scene.add(new THREE.AmbientLight(0x334466, 0.5));
+const mainLight = new THREE.DirectionalLight(0xffeedd, 1.5);
+mainLight.position.set(3, 6, 4);
+mainLight.castShadow = true;
+mainLight.shadow.mapSize.set(2048, 2048);
+mainLight.shadow.camera.near = 0.1;
+mainLight.shadow.camera.far = 20;
+mainLight.shadow.camera.left = -4;
+mainLight.shadow.camera.right = 4;
+mainLight.shadow.camera.top = 4;
+mainLight.shadow.camera.bottom = -2;
+scene.add(mainLight);
+scene.add(new THREE.DirectionalLight(0x4466ff, 0.7).translateX(-3).translateY(3).translateZ(-4));
+scene.add(new THREE.PointLight(0xffffff, 0.3, 10).translateZ(5).translateY(1));
+
+// ===== 床 =====
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(30, 30),
+  new THREE.MeshStandardMaterial({ color: 0xE91E8C, roughness: 0.6, metalness: 0.1 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// 反射風の円
+const reflection = new THREE.Mesh(
+  new THREE.CircleGeometry(1.5, 32),
+  new THREE.MeshBasicMaterial({ color: 0xC0185A, transparent: true, opacity: 0.2 })
+);
+reflection.rotation.x = -Math.PI / 2;
+reflection.position.y = 0.01;
+scene.add(reflection);
+
+// ===== パーティクル =====
+const pCount = 50;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(pCount * 3);
+const pVel = [];
+for (let i = 0; i < pCount; i++) {
+  pPos[i*3] = (Math.random()-0.5) * 12;
+  pPos[i*3+1] = Math.random() * 6;
+  pPos[i*3+2] = (Math.random()-0.5) * 12;
+  pVel.push(new THREE.Vector3((Math.random()-0.5)*0.003, (Math.random()-0.5)*0.002, (Math.random()-0.5)*0.003));
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+scene.add(new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.04, transparent: true, opacity: 0.2 })));
+
+// ===== 猫モデル =====
+let catModel = null;
+let catMixer = null;
+let catScale = 1;
+let catBaseY = 0;
+const actions = {};    // アニメーション名 → THREE.AnimationAction
+let currentAction = null;
+let currentAnimName = '';
+
+// アニメーションのカテゴリ分け
+const IDLE_ANIMS = ['Orc Idle', 'Sitting Idle', 'Look Around', 'Looking Around', 'Neck Stretching'];
+const MOVE_ANIMS = ['Walking', 'Running', 'Start Walking', 'Walking Turn 180'];
+const POSE_ANIMS = ['Male Sitting Pose', 'Male Sitting Pose (1)', 'Male Sitting Pose (2)', 'Male Sitting Pose (3)',
+                    'Male Laying Pose', 'Male Laying Pose (1)'];
+const ACTION_ANIMS = ['Yawn', 'Arm Stretching', 'Waving', 'Waving Gesture', 'Wave Hip Hop Dance',
+                      'Jump', 'Jumping', 'Surprised', 'Reacting', 'Batter On Deck'];
+const TRANSITION_ANIMS = ['Getting Up', 'Standing Up', 'Lying Down'];
+
+// ループしないアニメーション
+const ONCE_ANIMS = new Set([
+  'Jump', 'Jumping', 'Surprised', 'Reacting', 'Getting Up', 'Standing Up',
+  'Lying Down', 'Yawn', 'Arm Stretching', 'Waving', 'Waving Gesture'
+]);
+
+const loader = new GLTFLoader();
+
+async function loadCat() {
+  const gltf = await new Promise((resolve, reject) => {
+    loader.load('cat_signage.glb', resolve, undefined, reject);
+  });
+
+  catModel = gltf.scene;
+
+  // サイズ正規化
+  const bbox = new THREE.Box3().setFromObject(catModel);
+  const size = bbox.getSize(new THREE.Vector3());
+  const targetH = 1.8;
+  catScale = targetH / size.y;
+  catModel.scale.set(catScale, catScale, catScale);
+
+  // 足元を床に（初回のみ計算して固定）
+  const bbox2 = new THREE.Box3().setFromObject(catModel);
+  catBaseY = -bbox2.min.y;
+  catModel.position.y = catBaseY;
+
+  catModel.traverse(c => {
+    if (c.isMesh || c.isSkinnedMesh) {
+      c.castShadow = true;
+      c.receiveShadow = true;
+    }
+  });
+
+  scene.add(catModel);
+
+  // アニメーションミキサー
+  catMixer = new THREE.AnimationMixer(catModel);
+
+  // ルートモーション修正:
+  // Hipsの水平移動(X/Z)を除去し、上下移動(Y)は残す
+  // 他のボーンのpositionはそのまま残す
+  for (const clip of gltf.animations) {
+    for (const track of clip.tracks) {
+      if (track.name.includes('Hips') && track.name.endsWith('.position')) {
+        // positionはXYZの3値セット。X(index 0)とZ(index 2)を0に固定
+        const values = track.values;
+        for (let i = 0; i < values.length; i += 3) {
+          values[i] = 0;     // X = 0（左右移動なし）
+          values[i + 2] = 0; // Z = 0（前後移動なし）
+          // values[i+1] はY（上下）→ そのまま残す
+        }
+      }
+    }
+  }
+
+  // 全アニメーションをアクションとして登録
+  for (const clip of gltf.animations) {
+    const action = catMixer.clipAction(clip);
+    actions[clip.name] = action;
+
+    // ループ設定
+    if (ONCE_ANIMS.has(clip.name)) {
+      action.setLoop(THREE.LoopOnce);
+      action.clampWhenFinished = true;
+    }
+  }
+
+  console.log('アニメーション一覧:', Object.keys(actions));
+
+  // ONCE_ANIMSの終了時にアイドルに戻す
+  catMixer.addEventListener('finished', (e) => {
+    // 終わったアクション名を特定
+    const finishedName = Object.entries(actions).find(([n, a]) => a === e.action)?.[0];
+    if (finishedName && ONCE_ANIMS.has(finishedName)) {
+      // 座り/寝からの復帰
+      if (finishedName === 'Lying Down') {
+        cat.isSitting = false;
+        cat.isLying = true;
+        cat.timer = 0;
+        cat.duration = 4 + Math.random() * 4;
+        return;
+      }
+      if (finishedName === 'Getting Up' || finishedName === 'Standing Up') {
+        cat.isSitting = false;
+        cat.isLying = false;
+      }
+      nextState();
+    }
+  });
+
+  // 開始
+  playAnim('Orc Idle');
+  nextState();
+}
+loadCat();
+
+function playAnim(name, fadeTime = 0.5) {
+  const action = actions[name];
+  if (!action) {
+    console.warn('アニメーションなし:', name);
+    return;
+  }
+  if (currentAction === action) return;
+
+  if (currentAction) {
+    currentAction.fadeOut(fadeTime);
+  }
+  action.reset().fadeIn(fadeTime).play();
+  currentAction = action;
+  currentAnimName = name;
+}
+
+// ===== 自律行動ステートマシン =====
+const cat = {
+  state: 'idle',
+  timer: 0,
+  duration: 3,
+  posX: 0,
+  posZ: 0,
+  targetX: 0,
+  targetZ: 0,
+  rotY: 0,
+  targetRotY: 0,
+  jumpY: 0,
+  jumpVel: 0,
+  isJumping: false,
+  isSitting: false,
+  isLying: false,
+  interest: 0,
+};
+
+function nextState() {
+  const c = cat;
+  c.timer = 0;
+
+  // 座り/寝状態からは立ち上がる
+  if (c.isSitting || c.isLying) {
+    c.state = 'getUp';
+    c.duration = 8;
+    playAnim(c.isLying ? 'Getting Up' : 'Standing Up');
+    return;
+  }
+
+  // 重み付きランダム選択
+  const choices = [
+    { state: 'idle',      weight: 25 },
+    { state: 'walk',      weight: 25 },
+    { state: 'lookAround', weight: 10 },
+    { state: 'sit',       weight: 10 },
+    { state: 'action',    weight: 15 },
+    { state: 'lie',       weight: 5  },
+    { state: 'run',       weight: 10 },
+  ];
+
+  const totalWeight = choices.reduce((s, c) => s + c.weight, 0);
+  let r = Math.random() * totalWeight;
+  let next = 'idle';
+  for (const ch of choices) {
+    r -= ch.weight;
+    if (r <= 0) { next = ch.state; break; }
+  }
+
+  c.state = next;
+
+  switch (next) {
+    case 'idle': {
+      c.duration = 3 + Math.random() * 5;
+      const idle = IDLE_ANIMS[Math.floor(Math.random() * IDLE_ANIMS.length)];
+      playAnim(idle);
+      break;
+    }
+    case 'walk': {
+      c.targetX = (Math.random() - 0.5) * 8;
+      c.targetZ = (Math.random() - 0.5) * 4;
+      c.duration = 15;
+      playAnim('Walking');
+      break;
+    }
+    case 'run': {
+      c.targetX = (Math.random() - 0.5) * 8;
+      c.targetZ = (Math.random() - 0.5) * 4;
+      c.duration = 10;
+      playAnim('Running');
+      break;
+    }
+    case 'lookAround': {
+      c.duration = 4 + Math.random() * 3;
+      const la = Math.random() > 0.5 ? 'Look Around' : 'Looking Around';
+      playAnim(la);
+      break;
+    }
+    case 'sit': {
+      c.isSitting = true;
+      c.duration = 6 + Math.random() * 6;
+      const pose = POSE_ANIMS.filter(n => n.includes('Sitting'));
+      const pick = pose[Math.floor(Math.random() * pose.length)];
+      playAnim(pick || 'Sitting Idle');
+      break;
+    }
+    case 'lie': {
+      c.duration = 8;
+      playAnim('Lying Down');
+      break;
+    }
+    case 'action': {
+      c.duration = 8;
+      const act = ACTION_ANIMS[Math.floor(Math.random() * ACTION_ANIMS.length)];
+      playAnim(act);
+      break;
+    }
+  }
+}
+
+function updateCat(dt) {
+  const c = cat;
+  c.timer += dt;
+  c.interest = Math.max(0, c.interest - dt * 0.06);
+
+  // 時間切れで次の状態へ
+  if (c.timer > c.duration && c.state !== 'getUp') {
+    nextState();
+    return;
+  }
+
+  // 向き補間
+  let angleDiff = c.targetRotY - c.rotY;
+  while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+  while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+  c.rotY += angleDiff * dt * 4;
+
+  // ジャンプ
+  if (c.isJumping) {
+    c.jumpVel += 10 * dt;
+    c.jumpY += c.jumpVel * dt;
+    if (c.jumpY >= 0) { c.jumpY = 0; c.jumpVel = 0; c.isJumping = false; }
+  }
+
+  // 移動
+  if (c.state === 'walk' || c.state === 'run' || c.state === 'approach') {
+    const dx = c.targetX - c.posX;
+    const dz = c.targetZ - c.posZ;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+    const speed = c.state === 'run' ? 2.5 : c.state === 'approach' ? 1.5 : 0.8;
+
+    if (dist < 0.1) {
+      nextState();
+    } else {
+      c.posX += (dx / dist) * speed * dt;
+      c.posZ += (dz / dist) * speed * dt;
+      c.targetRotY = Math.atan2(dx, dz);
+    }
+  } else if (c.state === 'lookAround') {
+    c.targetRotY = Math.sin(c.timer * 1.2) * 1.0;
+  }
+
+  // モデルに適用
+  if (catModel) {
+    catModel.position.x = c.posX;
+    catModel.position.z = c.posZ;
+    catModel.rotation.y = c.rotY;
+
+    // 足元を床に合わせる（毎フレーム、アニメーションでHipsが上下するため）
+    catModel.position.y = 0;
+    const bbox = new THREE.Box3().setFromObject(catModel);
+    catModel.position.y = -bbox.min.y - c.jumpY;
+
+    // ジャンプ時のスクワッシュ
+    if (c.isJumping) {
+      const sq = 1 + c.jumpVel * 0.01;
+      catModel.scale.set(catScale * (2 - sq), catScale * sq, catScale * (2 - sq));
+    } else {
+      // 呼吸
+      const breath = Math.sin(Date.now() * 0.002) * 0.005;
+      catModel.scale.set(catScale + breath, catScale, catScale + breath);
+    }
+
+    reflection.position.x = c.posX;
+    reflection.position.z = c.posZ;
+  }
+
+  document.getElementById('state').textContent = `${c.state} | ${currentAnimName}`;
+}
+
+// ===== パーティクル =====
+function updateParticles() {
+  const pos = pGeo.attributes.position.array;
+  for (let i = 0; i < pCount; i++) {
+    pos[i*3] += pVel[i].x;
+    pos[i*3+1] += pVel[i].y;
+    pos[i*3+2] += pVel[i].z;
+    if (Math.abs(pos[i*3]) > 6) pVel[i].x *= -1;
+    if (pos[i*3+1] > 6 || pos[i*3+1] < 0) pVel[i].y *= -1;
+    if (Math.abs(pos[i*3+2]) > 6) pVel[i].z *= -1;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+}
+
+// ===== ループ =====
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  updateCat(dt);
+  updateParticles();
+  if (catMixer) catMixer.update(dt);
+  camera.lookAt(0, 0.8, 0);
+  renderer.render(scene, camera);
+}
+animate();
+
+// ===== イベント =====
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// クリックで近づく
+addEventListener('click', (e) => {
+  const mouse = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObject(floor);
+  if (hits.length > 0) {
+    const pt = hits[0].point;
+    cat.state = 'approach';
+    cat.timer = 0;
+    cat.targetX = Math.max(-5, Math.min(5, pt.x));
+    cat.targetZ = Math.max(-3, Math.min(3, pt.z));
+    cat.duration = 15;
+    cat.interest = Math.min(1, cat.interest + 0.4);
+    cat.isSitting = false;
+    cat.isLying = false;
+    playAnim('Walking');
+  }
+});
+
+// スペースでジャンプ
+addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (!cat.isJumping) {
+      cat.isJumping = true;
+      cat.jumpVel = -4;
+      cat.isSitting = false;
+      cat.isLying = false;
+      playAnim('Jump', 0.2);
+    }
+  }
+});
+
+// ダブルクリックでカメラに向かって手を振る
+addEventListener('dblclick', () => {
+  const c = cat;
+  c.state = 'wave';
+  c.timer = 0;
+  c.duration = 4;
+  c.isSitting = false;
+  c.isLying = false;
+  // カメラ方向を即座に向かせる（補間なし）
+  let faceAngle = Math.atan2(camera.position.x - c.posX, camera.position.z - c.posZ);
+  const waveAnims = ['Waving', 'Waving Gesture', 'Wave Hip Hop Dance'];
+  const pick = waveAnims[Math.floor(Math.random() * waveAnims.length)];
+  // Wave Hip Hop Danceは横向きアニメなので90度補正
+  if (pick === 'Wave Hip Hop Dance') {
+    faceAngle += Math.PI / 2;
+  }
+  c.rotY = faceAngle;
+  c.targetRotY = faceAngle;
+  playAnim(pick, 0.3);
+});
+
+// 右クリックメニュー無効化
+addEventListener('contextmenu', (e) => e.preventDefault());
+</script>
+</body>
+</html>

@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>3D黒猫サイネージ — リグ付き</title>
+<style>
+  * { margin: 0; padding: 0; }
+  body { background: #0a0a15; overflow: hidden; }
+  #info {
+    position: fixed; bottom: 10px; left: 10px;
+    color: #444; font: 10px monospace; z-index: 10;
+  }
+  #state {
+    position: fixed; top: 10px; left: 10px;
+    color: #D4A537; font: 12px monospace; z-index: 10;
+  }
+</style>
+</head>
+<body>
+<div id="info">click: 近づく / dblclick: ジャンプ / move: 目線追従</div>
+<div id="state"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ===== シーン =====
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x2D7DD2);
+scene.fog = new THREE.Fog(0x2D7DD2, 15, 40);
+
+const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 2, 18);
+camera.lookAt(0, 0.8, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+// ===== ライティング =====
+scene.add(new THREE.AmbientLight(0x334466, 0.5));
+
+const mainLight = new THREE.DirectionalLight(0xffeedd, 1.5);
+mainLight.position.set(3, 6, 4);
+mainLight.castShadow = true;
+mainLight.shadow.mapSize.set(2048, 2048);
+mainLight.shadow.camera.near = 0.1;
+mainLight.shadow.camera.far = 20;
+mainLight.shadow.camera.left = -4;
+mainLight.shadow.camera.right = 4;
+mainLight.shadow.camera.top = 4;
+mainLight.shadow.camera.bottom = -2;
+scene.add(mainLight);
+
+const rimLight = new THREE.DirectionalLight(0x4466ff, 0.7);
+rimLight.position.set(-3, 3, -4);
+scene.add(rimLight);
+
+const fillLight = new THREE.PointLight(0xffffff, 0.3, 10);
+fillLight.position.set(0, 1, 5);
+scene.add(fillLight);
+
+// ===== 床 =====
+const floorGeo = new THREE.PlaneGeometry(30, 30);
+const floorMat = new THREE.MeshStandardMaterial({ color: 0xE91E8C, roughness: 0.6, metalness: 0.1 });
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// 反射風の円
+const reflGeo = new THREE.CircleGeometry(1.5, 32);
+const reflMat = new THREE.MeshBasicMaterial({ color: 0xC0185A, transparent: true, opacity: 0.2 });
+const reflection = new THREE.Mesh(reflGeo, reflMat);
+reflection.rotation.x = -Math.PI / 2;
+reflection.position.y = 0.01;
+scene.add(reflection);
+
+// ===== パーティクル =====
+const pCount = 50;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(pCount * 3);
+const pVel = [];
+for (let i = 0; i < pCount; i++) {
+  pPos[i*3] = (Math.random()-0.5) * 12;
+  pPos[i*3+1] = Math.random() * 6;
+  pPos[i*3+2] = (Math.random()-0.5) * 12;
+  pVel.push(new THREE.Vector3((Math.random()-0.5)*0.003, (Math.random()-0.5)*0.002, (Math.random()-0.5)*0.003));
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const pMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.04, transparent: true, opacity: 0.2 });
+scene.add(new THREE.Points(pGeo, pMat));
+
+// ===== 猫モデル + アニメーション =====
+let catModel = null;
+let catMixer = null;
+let animations = {};  // { idle, walk, run }
+let currentAction = null;
+let currentAnimName = 'idle';
+let catScale = 1;
+let catBones = {};
+const loader = new GLTFLoader();
+
+// アニメーション読み込み用ヘルパー
+function loadGLB(url) {
+  return new Promise((resolve, reject) => {
+    loader.load(url, resolve, undefined, reject);
+  });
+}
+
+async function loadCat() {
+  // リグ付きモデル（新しいマルチビュー版）
+  const riggedGltf = await loadGLB('3d_output/cat_mv_rigged.glb');
+  catModel = riggedGltf.scene;
+
+  // サイズ正規化
+  const bbox = new THREE.Box3().setFromObject(catModel);
+  const size = bbox.getSize(new THREE.Vector3());
+  const center = bbox.getCenter(new THREE.Vector3());
+  const targetH = 1.8;
+  catScale = targetH / size.y;
+  catModel.scale.set(catScale, catScale, catScale);
+
+  // 足元を床に
+  const bbox2 = new THREE.Box3().setFromObject(catModel);
+  catModel.position.y = -bbox2.min.y;
+
+  // しっぽ変形用: メッシュのvertex情報を保持
+  catModel.traverse(c => {
+    if (c.isMesh || c.isSkinnedMesh) {
+      c.castShadow = true;
+      c.receiveShadow = true;
+      setupTailDeform(c);
+    }
+  });
+
+  scene.add(catModel);
+  catMixer = new THREE.AnimationMixer(catModel);
+
+  // idleアニメは使わない（T-poseなので）
+  // ボーン補正で自然な立ちポーズにする
+
+  // 歩きアニメーション（新しいマルチビュー版）
+  try {
+    const walkGltf = await loadGLB('3d_output/cat_mv_anim_walking_glb.glb');
+    if (walkGltf.animations.length > 0) {
+      animations.walk = catMixer.clipAction(walkGltf.animations[0]);
+    }
+  } catch(e) { console.warn('歩きアニメなし'); }
+
+  // 走りアニメーション
+  try {
+    const runGltf = await loadGLB('3d_output/cat_mv_anim_running_glb.glb');
+    if (runGltf.animations.length > 0) {
+      animations.run = catMixer.clipAction(runGltf.animations[0]);
+    }
+  } catch(e) { console.warn('走りアニメなし'); }
+
+  // ボーンをキャッシュ
+  catBones = {};
+  catModel.traverse(bone => {
+    if (bone.isBone) catBones[bone.name] = bone;
+  });
+
+  // idle開始（idleアニメがない場合はボーン補正で立たせる）
+  playAnimation('idle');
+  console.log('猫読み込み完了', Object.keys(animations), 'ボーン:', Object.keys(catBones));
+}
+loadCat();
+
+// ===== しっぽプロシージャル変形 =====
+let tailMeshes = []; // { mesh, origPositions, tailVertexIndices, bbox }
+
+function setupTailDeform(mesh) {
+  const geo = mesh.geometry;
+  if (!geo || !geo.attributes.position) return;
+
+  const pos = geo.attributes.position;
+  const count = pos.count;
+
+  // バウンディングボックスを計算
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const minY = bb.min.y;
+  const maxY = bb.max.y;
+  const height = maxY - minY;
+  const minZ = bb.min.z;
+  const maxZ = bb.max.z;
+  const depth = maxZ - minZ;
+
+  // 元の頂点位置を保存
+  const origPositions = new Float32Array(pos.array);
+
+  // しっぽの頂点を検出
+  // しっぽ = 低いY位置（下半身） + Z座標が後ろ寄り
+  const tailIndices = [];
+  const hipY = minY + height * 0.45; // 腰より下
+  const tailZThreshold = minZ + depth * 0.55; // 後ろ側
+
+  for (let i = 0; i < count; i++) {
+    const y = origPositions[i * 3 + 1];
+    const z = origPositions[i * 3 + 2];
+    // 腰から下 かつ 後ろ側 → しっぽ候補
+    if (y < hipY && z < tailZThreshold) {
+      // さらに、中心からのX距離が小さいもの（しっぽは細い）
+      const x = origPositions[i * 3];
+      const centerX = (bb.min.x + bb.max.x) / 2;
+      const xDist = Math.abs(x - centerX);
+      const maxTailWidth = (bb.max.x - bb.min.x) * 0.25;
+      if (xDist < maxTailWidth) {
+        tailIndices.push(i);
+      }
+    }
+  }
+
+  if (tailIndices.length > 0) {
+    tailMeshes.push({
+      mesh,
+      origPositions,
+      tailIndices,
+      minY,
+      maxY,
+      height,
+    });
+    console.log(`しっぽ頂点検出: ${tailIndices.length}/${count}`);
+  }
+}
+
+let tailTime = 0;
+function updateTailDeform(dt) {
+  tailTime += dt;
+
+  // 状態に応じてしっぽの動きを変える
+  let swingSpeed = 1.5;
+  let swingAmp = 0.08;
+  let verticalAmp = 0.03;
+
+  if (cat.state === 'walk' || cat.state === 'approach') {
+    swingSpeed = 3.0;
+    swingAmp = 0.12;
+    verticalAmp = 0.04;
+  } else if (cat.interest > 0.3) {
+    swingSpeed = 4.0;
+    swingAmp = 0.15;
+    verticalAmp = 0.02;
+  } else if (cat.isJumping) {
+    swingSpeed = 5.0;
+    swingAmp = 0.2;
+    verticalAmp = 0.1;
+  }
+
+  for (const td of tailMeshes) {
+    const pos = td.mesh.geometry.attributes.position;
+    const arr = pos.array;
+    const orig = td.origPositions;
+
+    for (const idx of td.tailIndices) {
+      const oy = orig[idx * 3 + 1];
+      // しっぽの付け根からの距離（0=付け根, 1=先端）
+      const tailFactor = 1 - (oy - td.minY) / (td.height * 0.45);
+      const factor = Math.max(0, Math.min(1, tailFactor));
+
+      // 波状の揺れ（付け根→先端で位相がずれる）
+      const phase = tailTime * swingSpeed + factor * 2.5;
+
+      // X方向（左右の揺れ）
+      arr[idx * 3] = orig[idx * 3] + Math.sin(phase) * swingAmp * td.height * factor * factor;
+
+      // Y方向（上下の揺れ）
+      arr[idx * 3 + 1] = orig[idx * 3 + 1] + Math.sin(phase * 0.7 + 1) * verticalAmp * td.height * factor;
+
+      // Z方向（前後の揺れ）— 小さめ
+      arr[idx * 3 + 2] = orig[idx * 3 + 2] + Math.cos(phase * 0.5) * swingAmp * 0.3 * td.height * factor;
+    }
+
+    pos.needsUpdate = true;
+    td.mesh.geometry.computeVertexNormals();
+  }
+}
+
+function playAnimation(name, fadeTime = 0.5) {
+  currentAnimName = name;
+  const action = animations[name];
+  if (!action || action === currentAction) return;
+
+  if (currentAction) {
+    currentAction.fadeOut(fadeTime);
+  }
+  action.reset().fadeIn(fadeTime).play();
+  currentAction = action;
+}
+
+// idle時: T-poseから自然な立ちポーズに補正
+// Mixamoリグ: 肩→腕はローカルY軸方向に伸びている
+// 腕を下ろす = 肩ボーンをローカルX軸（前方向）に回転
+function applyIdlePoseCorrection() {
+  const isIdle = (currentAnimName === 'idle' || currentAnimName === 'lookAround' || currentAnimName === 'turnToCamera');
+  if (!isIdle) return;
+  if (!catBones.LeftShoulder) return;
+
+  // 左腕を下ろす（X軸正回転 = 前→下）
+  const leftQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI * 0.45);
+  catBones.LeftShoulder.quaternion.copy(leftQ);
+
+  // 右腕を下ろす
+  const rightQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI * 0.45);
+  catBones.RightShoulder.quaternion.copy(rightQ);
+
+  // 前腕を少し曲げる
+  const foreArmQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.15);
+  if (catBones.LeftForeArm) catBones.LeftForeArm.quaternion.copy(foreArmQ);
+  if (catBones.RightForeArm) catBones.RightForeArm.quaternion.copy(foreArmQ);
+}
+
+// ===== 自律行動 =====
+const cat = {
+  state: 'idle',
+  timer: 0,
+  duration: 3,
+  posX: 0,
+  posZ: 0,
+  targetX: 0,
+  targetZ: 0,
+  rotY: 0,
+  targetRotY: 0,
+  // ジャンプ
+  jumpY: 0,
+  jumpVel: 0,
+  isJumping: false,
+  // 興味
+  interest: 0,
+};
+
+function updateCat(dt) {
+  const c = cat;
+  c.timer += dt;
+  c.interest = Math.max(0, c.interest - dt * 0.06);
+
+  if (c.timer > c.duration) nextState();
+
+  // 向き補間
+  // 角度の差を-PI〜PIに正規化してから補間
+  let angleDiff = c.targetRotY - c.rotY;
+  while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+  while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+  c.rotY += angleDiff * dt * 4;
+
+  // ジャンプ
+  if (c.isJumping) {
+    c.jumpVel += 10 * dt;
+    c.jumpY += c.jumpVel * dt;
+    if (c.jumpY >= 0) { c.jumpY = 0; c.jumpVel = 0; c.isJumping = false; }
+  }
+
+  // 状態ごと
+  if (c.state === 'walk' || c.state === 'approach') {
+    const dx = c.targetX - c.posX;
+    const dz = c.targetZ - c.posZ;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+    const speed = c.state === 'approach' ? 1.2 : 0.8;
+
+    if (dist < 0.1) {
+      c.state = 'idle';
+      c.timer = 0;
+      c.duration = 2 + Math.random() * 3;
+      playAnimation('idle');
+    } else {
+      const moveX = (dx / dist) * speed * dt;
+      const moveZ = (dz / dist) * speed * dt;
+      c.posX += moveX;
+      c.posZ += moveZ;
+      c.targetRotY = Math.atan2(dx, dz);
+    }
+  } else if (c.state === 'lookAround') {
+    c.targetRotY = Math.sin(c.timer * 1.2) * 1.0;
+  } else if (c.state === 'turnToCamera') {
+    c.targetRotY = Math.atan2(camera.position.x - c.posX, camera.position.z - c.posZ);
+  }
+
+  // モデルに適用
+  if (catModel) {
+    catModel.position.x = c.posX;
+    catModel.position.z = c.posZ;
+    catModel.position.y = -c.jumpY;
+    // 足元補正を再計算
+    const bbox = new THREE.Box3().setFromObject(catModel);
+    if (c.jumpY <= 0) {
+      catModel.position.y = -bbox.min.y - c.jumpY;
+    }
+    catModel.rotation.y = c.rotY;
+
+    // ジャンプ時のスクワッシュ
+    if (c.isJumping) {
+      const sq = 1 + c.jumpVel * 0.01;
+      catModel.scale.set(catScale * (2 - sq), catScale * sq, catScale * (2 - sq));
+    } else {
+      // 呼吸
+      const breath = Math.sin(Date.now() * 0.002) * 0.005;
+      catModel.scale.set(catScale + breath, catScale, catScale + breath);
+    }
+
+    // 反射の位置
+    reflection.position.x = c.posX;
+    reflection.position.z = c.posZ;
+  }
+
+  document.getElementById('state').textContent = c.state;
+}
+
+function nextState() {
+  const c = cat;
+  const choices = ['idle', 'walk', 'walk', 'lookAround', 'turnToCamera', 'idle', 'walk'];
+  const next = choices[Math.floor(Math.random() * choices.length)];
+
+  c.state = next;
+  c.timer = 0;
+
+  switch (next) {
+    case 'idle':
+      c.duration = 3 + Math.random() * 4;
+      playAnimation('idle');
+      break;
+    case 'walk':
+      c.targetX = (Math.random() - 0.5) * 8;
+      c.targetZ = (Math.random() - 0.5) * 4;
+      c.duration = 15;
+      playAnimation('walk');
+      break;
+    case 'lookAround':
+      c.duration = 3 + Math.random() * 3;
+      playAnimation('idle');
+      break;
+    case 'turnToCamera':
+      c.duration = 3 + Math.random() * 4;
+      playAnimation('idle');
+      break;
+  }
+}
+
+// ===== カメラ（固定 — 覗き窓） =====
+function updateCamera(dt) {
+  camera.lookAt(0, 0.8, 0);
+}
+
+// ===== パーティクル更新 =====
+function updateParticles() {
+  const pos = pGeo.attributes.position.array;
+  for (let i = 0; i < pCount; i++) {
+    pos[i*3] += pVel[i].x;
+    pos[i*3+1] += pVel[i].y;
+    pos[i*3+2] += pVel[i].z;
+    if (Math.abs(pos[i*3]) > 6) pVel[i].x *= -1;
+    if (pos[i*3+1] > 6 || pos[i*3+1] < 0) pVel[i].y *= -1;
+    if (Math.abs(pos[i*3+2]) > 6) pVel[i].z *= -1;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+}
+
+// ===== ループ =====
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  updateCat(dt);
+  updateCamera(dt);
+  updateParticles();
+  if (catMixer) catMixer.update(dt);
+  applyIdlePoseCorrection();
+  updateTailDeform(dt);
+  renderer.render(scene, camera);
+}
+animate();
+
+// ===== イベント =====
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+window.addEventListener('click', (e) => {
+  const c = cat;
+  // レイキャストで床のクリック位置を取得
+  const mouse = new THREE.Vector2(
+    (e.clientX / window.innerWidth) * 2 - 1,
+    -(e.clientY / window.innerHeight) * 2 + 1
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObject(floor);
+
+  if (hits.length > 0) {
+    const pt = hits[0].point;
+    c.state = 'approach';
+    c.timer = 0;
+    c.targetX = Math.max(-5, Math.min(5, pt.x));
+    c.targetZ = Math.max(-3, Math.min(3, pt.z));
+    c.duration = 15;
+    c.interest = Math.min(1, c.interest + 0.4);
+    playAnimation('walk');
+  }
+});
+
+window.addEventListener('dblclick', () => {
+  const c = cat;
+  if (!c.isJumping) {
+    c.isJumping = true;
+    c.jumpVel = -4;
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>窓猫サイネージ - Prototype</title>
+<style>
+  * { margin: 0; padding: 0; }
+  body { background: #1a1a2e; overflow: hidden; cursor: none; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script>
+// ========== 窓猫サイネージ プロトタイプ ==========
+
+let cat;
+let t = 0; // グローバル時間
+
+// 窓の設定
+const WINDOW_MARGIN = 60;
+const SILL_HEIGHT = 40;
+
+// 背景の部屋要素
+let roomObjects = [];
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  cat = new Cat(width / 2, height * 0.65);
+
+  // 部屋の中のオブジェクト（奥の棚、植物など）
+  roomObjects = [
+    { type: 'shelf', x: width * 0.15, y: height * 0.3, w: 120, h: 15 },
+    { type: 'shelf', x: width * 0.15, y: height * 0.45, w: 120, h: 15 },
+    { type: 'plant', x: width * 0.82, y: height * 0.35 },
+    { type: 'clock', x: width * 0.5, y: height * 0.18 },
+  ];
+}
+
+function draw() {
+  t += deltaTime / 1000;
+
+  drawRoom();
+  cat.update(deltaTime / 1000);
+  cat.draw();
+  drawWindowFrame();
+  drawAmbientParticles();
+}
+
+// ===== 部屋の描画 =====
+function drawRoom() {
+  // 部屋の壁
+  background(35, 32, 48);
+
+  // 床
+  noStroke();
+  fill(50, 45, 62);
+  rect(WINDOW_MARGIN, height * 0.72, width - WINDOW_MARGIN * 2, height * 0.3);
+
+  // 壁のテクスチャ（微かな模様）
+  for (let i = 0; i < 5; i++) {
+    let nx = noise(i * 100, t * 0.02) * (width - WINDOW_MARGIN * 2) + WINDOW_MARGIN;
+    let ny = noise(i * 200, t * 0.02) * height * 0.5 + height * 0.1;
+    fill(40, 37, 55, 30);
+    ellipse(nx, ny, 200, 200);
+  }
+
+  // 部屋のオブジェクト
+  for (let obj of roomObjects) {
+    drawRoomObject(obj);
+  }
+}
+
+function drawRoomObject(obj) {
+  push();
+  if (obj.type === 'shelf') {
+    fill(65, 55, 45);
+    noStroke();
+    rect(obj.x, obj.y, obj.w, obj.h, 3);
+    // 棚の上の小物
+    fill(80, 70, 90);
+    rect(obj.x + 10, obj.y - 20, 15, 20, 2);
+    fill(90, 75, 60);
+    rect(obj.x + 35, obj.y - 15, 12, 15, 2);
+    fill(70, 85, 80);
+    rect(obj.x + 70, obj.y - 25, 18, 25, 2);
+  } else if (obj.type === 'plant') {
+    // 鉢
+    fill(140, 80, 60);
+    noStroke();
+    trapezoid(obj.x, obj.y + 20, 30, 40, 40);
+    // 葉っぱ
+    fill(50, 100, 55);
+    for (let i = 0; i < 5; i++) {
+      let angle = -PI / 2 + sin(t * 0.5 + i) * 0.1 + (i - 2) * 0.4;
+      let len = 35 + sin(t * 0.3 + i * 2) * 3;
+      push();
+      translate(obj.x, obj.y);
+      rotate(angle);
+      ellipse(0, -len / 2, 12, len);
+      pop();
+    }
+  } else if (obj.type === 'clock') {
+    // 壁掛け時計
+    fill(60, 55, 70);
+    stroke(80, 75, 90);
+    strokeWeight(2);
+    ellipse(obj.x, obj.y, 50, 50);
+    // 針
+    stroke(180, 170, 160);
+    strokeWeight(1.5);
+    let hr = (t * 0.01) % TWO_PI;
+    let mn = (t * 0.1) % TWO_PI;
+    line(obj.x, obj.y, obj.x + cos(hr - HALF_PI) * 12, obj.y + sin(hr - HALF_PI) * 12);
+    line(obj.x, obj.y, obj.x + cos(mn - HALF_PI) * 18, obj.y + sin(mn - HALF_PI) * 18);
+  }
+  pop();
+}
+
+function trapezoid(cx, cy, topW, botW, h) {
+  beginShape();
+  vertex(cx - topW / 2, cy);
+  vertex(cx + topW / 2, cy);
+  vertex(cx + botW / 2, cy + h);
+  vertex(cx - botW / 2, cy + h);
+  endShape(CLOSE);
+}
+
+// ===== 窓枠 =====
+function drawWindowFrame() {
+  let m = WINDOW_MARGIN;
+  noFill();
+  stroke(90, 80, 70);
+  strokeWeight(20);
+  // 外枠
+  rect(m - 10, m - 10, width - m * 2 + 20, height - m * 2 + 20, 5);
+
+  // 窓の桟（十字）
+  strokeWeight(12);
+  stroke(80, 72, 62);
+  line(width / 2, m, width / 2, height - m);
+  line(m, height * 0.45, width - m, height * 0.45);
+
+  // 窓枠のハイライト
+  strokeWeight(2);
+  stroke(110, 100, 88, 100);
+  noFill();
+  rect(m, m, width - m * 2, height - m * 2, 3);
+
+  // 窓の下枠（窓台）
+  noStroke();
+  fill(75, 68, 58);
+  rect(m - 20, height - m, width - m * 2 + 40, SILL_HEIGHT, 3);
+  fill(85, 78, 68);
+  rect(m - 20, height - m, width - m * 2 + 40, 8, 3);
+
+  // ガラスの反射
+  noFill();
+  stroke(255, 255, 255, 15);
+  strokeWeight(1);
+  for (let i = 0; i < 3; i++) {
+    let offset = i * 80 + sin(t * 0.2) * 10;
+    line(m + offset, m, m + offset - 60, height * 0.45);
+  }
+}
+
+// ===== 空気中のホコリ =====
+function drawAmbientParticles() {
+  noStroke();
+  for (let i = 0; i < 15; i++) {
+    let px = noise(i * 73.1, t * 0.05) * (width - WINDOW_MARGIN * 2) + WINDOW_MARGIN;
+    let py = noise(i * 37.7, t * 0.05) * (height - WINDOW_MARGIN * 2) + WINDOW_MARGIN;
+    let alpha = noise(i * 51.3, t * 0.3) * 40 + 10;
+    let size = noise(i * 99.9) * 3 + 1;
+    fill(200, 190, 170, alpha);
+    ellipse(px, py, size, size);
+  }
+}
+
+// ========== 猫クラス ==========
+class Cat {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.targetX = x;
+    this.dir = 1; // 1=右向き, -1=左向き
+    this.size = 55; // 基本サイズ
+
+    // 状態管理
+    this.state = 'idle';
+    this.stateTimer = 0;
+    this.stateDuration = 3;
+
+    // アニメーション用
+    this.walkPhase = 0;
+    this.breathPhase = 0;
+    this.tailPhase = random(1000);
+    this.earPhase = random(1000);
+    this.blinkTimer = 0;
+    this.isBlinking = false;
+    this.pawLickPhase = 0;
+    this.stretchPhase = 0;
+    this.headTilt = 0;
+    this.nuzzlePhase = 0;
+    this.interest = 0; // クリックへの興味度（0〜1）
+    this.jumpVelocity = 0;
+    this.jumpY = 0; // 地面からのオフセット
+    this.isJumping = false;
+
+    // 移動範囲
+    this.minX = WINDOW_MARGIN + 100;
+    this.maxX = width - WINDOW_MARGIN - 100;
+    this.floorY = height * 0.68;
+
+    this.y = this.floorY;
+  }
+
+  update(dt) {
+    this.stateTimer += dt;
+    this.breathPhase += dt * 2;
+    this.tailPhase += dt;
+    this.earPhase += dt;
+
+    // 瞬き
+    this.blinkTimer -= dt;
+    if (this.blinkTimer <= 0) {
+      if (this.isBlinking) {
+        this.isBlinking = false;
+        this.blinkTimer = random(2, 6);
+      } else {
+        this.isBlinking = true;
+        this.blinkTimer = 0.12;
+      }
+    }
+
+    // 状態遷移
+    if (this.stateTimer > this.stateDuration) {
+      this.changeState();
+    }
+
+    // ジャンプ物理
+    if (this.isJumping) {
+      this.jumpVelocity += 600 * dt; // 重力
+      this.jumpY += this.jumpVelocity * dt;
+      if (this.jumpY >= 0) {
+        this.jumpY = 0;
+        this.jumpVelocity = 0;
+        this.isJumping = false;
+      }
+    }
+
+    // 興味度の減衰
+    this.interest = max(0, this.interest - dt * 0.05);
+
+    // 状態ごとの更新
+    switch (this.state) {
+      case 'walk':
+        this.updateWalk(dt);
+        break;
+      case 'idle':
+        this.updateIdle(dt);
+        break;
+      case 'sleep':
+        this.updateSleep(dt);
+        break;
+      case 'groom':
+        this.updateGroom(dt);
+        break;
+      case 'stretch':
+        this.updateStretch(dt);
+        break;
+      case 'lookAround':
+        this.updateLookAround(dt);
+        break;
+      case 'approach':
+        this.updateApproach(dt);
+        break;
+      case 'nuzzle':
+        this.updateNuzzle(dt);
+        break;
+    }
+  }
+
+  changeState() {
+    let states = ['idle', 'walk', 'idle', 'walk', 'sleep', 'groom', 'stretch', 'lookAround', 'idle'];
+    let next = random(states);
+
+    // 寝てる状態からはゆっくり起きる
+    if (this.state === 'sleep' && next !== 'stretch') {
+      next = 'stretch';
+    }
+
+    this.state = next;
+    this.stateTimer = 0;
+    this.stretchPhase = 0;
+    this.pawLickPhase = 0;
+
+    switch (next) {
+      case 'walk':
+        this.targetX = random(this.minX, this.maxX);
+        this.dir = this.targetX > this.x ? 1 : -1;
+        this.stateDuration = abs(this.targetX - this.x) / 40 + random(1);
+        break;
+      case 'idle':
+        this.stateDuration = random(2, 5);
+        break;
+      case 'sleep':
+        this.stateDuration = random(5, 10);
+        break;
+      case 'groom':
+        this.stateDuration = random(3, 5);
+        break;
+      case 'stretch':
+        this.stateDuration = random(2, 3);
+        break;
+      case 'lookAround':
+        this.stateDuration = random(2, 4);
+        break;
+    }
+  }
+
+  updateWalk(dt) {
+    this.walkPhase += dt * 6;
+    let speed = 40;
+    let dx = this.targetX - this.x;
+    if (abs(dx) < 5) {
+      this.state = 'idle';
+      this.stateTimer = 0;
+      this.stateDuration = random(2, 4);
+    } else {
+      this.x += Math.sign(dx) * speed * dt;
+      this.dir = Math.sign(dx);
+    }
+  }
+
+  updateIdle(dt) {
+    // しっぽと耳だけ動く（breathPhaseで呼吸）
+    this.headTilt = sin(t * 0.5) * 0.03;
+  }
+
+  updateSleep(dt) {
+    // 呼吸がゆっくりになる
+  }
+
+  updateGroom(dt) {
+    this.pawLickPhase += dt * 3;
+  }
+
+  updateStretch(dt) {
+    this.stretchPhase += dt / this.stateDuration;
+  }
+
+  updateLookAround(dt) {
+    this.headTilt = sin(t * 2) * 0.15;
+  }
+
+  updateApproach(dt) {
+    this.walkPhase += dt * 4; // 歩くより少しゆっくり
+    let speed = 30;
+    let dx = this.targetX - this.x;
+    if (abs(dx) < 30) {
+      // 十分近づいた→スリスリに遷移
+      this.state = 'nuzzle';
+      this.stateTimer = 0;
+      this.stateDuration = random(3, 6);
+      this.nuzzlePhase = 0;
+    } else {
+      this.x += Math.sign(dx) * speed * dt;
+      this.dir = Math.sign(dx);
+    }
+  }
+
+  updateNuzzle(dt) {
+    this.nuzzlePhase += dt * 2.5;
+    // 体を左右にゆらゆら（スリスリ感）
+    this.headTilt = sin(this.nuzzlePhase * 2) * 0.2;
+  }
+
+  // ジャンプ
+  jump() {
+    if (!this.isJumping && this.state !== 'sleep') {
+      this.isJumping = true;
+      this.jumpVelocity = -280; // 上方向の初速
+    }
+  }
+
+  // クリックに反応
+  reactToClick(clickX, clickY) {
+    this.interest = min(1, this.interest + 0.4);
+
+    let distToCat = abs(clickX - this.x);
+
+    if (distToCat < 80) {
+      // 猫の近くでクリック → スリスリ
+      this.state = 'nuzzle';
+      this.stateTimer = 0;
+      this.stateDuration = random(3, 6);
+      this.nuzzlePhase = 0;
+      this.dir = clickX > this.x ? 1 : -1;
+    } else if (this.state === 'sleep') {
+      // 寝てる → まず起きる（キョロキョロ）、次のクリックで近づく
+      this.state = 'lookAround';
+      this.stateTimer = 0;
+      this.stateDuration = random(1.5, 2.5);
+    } else {
+      // 離れた場所 → 近づいてくる
+      this.state = 'approach';
+      this.stateTimer = 0;
+      // 窓の範囲内に制限
+      this.targetX = constrain(clickX, this.minX, this.maxX);
+      this.dir = this.targetX > this.x ? 1 : -1;
+      this.stateDuration = abs(this.targetX - this.x) / 30 + 1;
+    }
+  }
+
+  draw() {
+    push();
+    translate(this.x, this.y + this.jumpY);
+    scale(this.dir, 1);
+
+    // ジャンプ中は体を少し縮める
+    if (this.isJumping) {
+      let squash = map(this.jumpVelocity, -280, 280, 0.9, 1.1);
+      scale(1, constrain(squash, 0.85, 1.15));
+    }
+
+    let breathOffset = sin(this.breathPhase) * 1.5;
+    let s = this.size;
+
+    if (this.state === 'sleep') {
+      this.drawSleeping(s, breathOffset);
+    } else if (this.state === 'stretch') {
+      this.drawStretching(s, breathOffset);
+    } else if (this.state === 'nuzzle') {
+      this.drawNuzzle(s, breathOffset);
+    } else {
+      this.drawStanding(s, breathOffset);
+    }
+
+    pop();
+  }
+
+  drawStanding(s, breathOffset) {
+    let isWalking = (this.state === 'walk' || this.state === 'approach');
+    let walkBob = isWalking ? sin(this.walkPhase) * 3 : 0;
+    let legPhase = isWalking ? this.walkPhase : 0;
+
+    noStroke();
+
+    // しっぽ
+    this.drawTail(s, breathOffset);
+
+    // 後ろ脚
+    fill(55, 50, 65);
+    let backLegOffset = this.state === 'walk' ? sin(legPhase + PI) * 8 : 0;
+    this.drawLeg(-s * 0.2, backLegOffset, s);
+    this.drawLeg(s * 0.15, -backLegOffset, s);
+
+    // 胴体
+    fill(70, 65, 82);
+    let bodyY = -s * 0.45 + breathOffset + walkBob;
+    ellipse(0, bodyY, s * 1.3, s * 0.8);
+
+    // お腹（少し明るい）
+    fill(85, 80, 95);
+    ellipse(-s * 0.05, bodyY + s * 0.08, s * 0.7, s * 0.5);
+
+    // 前脚
+    fill(65, 60, 78);
+    let frontLegOffset = this.state === 'walk' ? sin(legPhase) * 8 : 0;
+    this.drawLeg(-s * 0.3, frontLegOffset, s);
+    this.drawLeg(s * 0.05, -frontLegOffset, s);
+
+    // 頭
+    let headX = s * 0.35;
+    let headY = -s * 0.85 + breathOffset + walkBob;
+
+    if (this.state === 'groom') {
+      headY += sin(this.pawLickPhase) * 5 + 10;
+      headX -= 10;
+    }
+
+    push();
+    translate(headX, headY);
+    rotate(this.headTilt * this.dir);
+    this.drawHead(s);
+    pop();
+
+    // 毛繕い中の前脚（顔の前）
+    if (this.state === 'groom') {
+      fill(70, 65, 82);
+      let pawY = headY + s * 0.15 + sin(this.pawLickPhase) * 3;
+      ellipse(headX - s * 0.05, pawY, s * 0.2, s * 0.12);
+    }
+  }
+
+  drawSleeping(s, breathOffset) {
+    let sleepBreath = sin(this.breathPhase * 0.5) * 2;
+
+    noStroke();
+
+    // しっぽ（丸まった）
+    noFill();
+    stroke(70, 65, 82);
+    strokeWeight(s * 0.15);
+    let tailWave = sin(this.tailPhase * 0.3) * 0.1;
+    arc(s * 0.3, -s * 0.2, s * 0.8, s * 0.6, -PI * 0.3 + tailWave, PI * 0.5 + tailWave);
+
+    noStroke();
+
+    // 丸まった胴体
+    fill(70, 65, 82);
+    ellipse(0, -s * 0.25 + sleepBreath, s * 1.4, s * 0.7);
+
+    // お腹
+    fill(85, 80, 95);
+    ellipse(0, -s * 0.18 + sleepBreath, s * 0.8, s * 0.4);
+
+    // 頭（胴体に埋もれる）
+    push();
+    translate(s * 0.35, -s * 0.45 + sleepBreath);
+
+    // 頭本体
+    fill(70, 65, 82);
+    ellipse(0, 0, s * 0.6, s * 0.5);
+
+    // 耳
+    fill(65, 60, 78);
+    triangle(-s * 0.18, -s * 0.2, -s * 0.28, -s * 0.42, -s * 0.05, -s * 0.32);
+    triangle(s * 0.12, -s * 0.22, s * 0.02, -s * 0.44, s * 0.25, -s * 0.34);
+
+    // 閉じた目
+    stroke(40, 35, 50);
+    strokeWeight(2);
+    noFill();
+    arc(-s * 0.05, -s * 0.02, s * 0.12, s * 0.06, 0, PI);
+    arc(s * 0.12, -s * 0.02, s * 0.12, s * 0.06, 0, PI);
+
+    // Zzz
+    noStroke();
+    fill(180, 170, 200, 120 + sin(t * 2) * 50);
+    textSize(12);
+    textFont('serif');
+    text('z', s * 0.3 + sin(t) * 3, -s * 0.35 - sin(t * 1.5) * 5);
+    textSize(16);
+    text('z', s * 0.45 + sin(t * 0.8) * 4, -s * 0.5 - sin(t * 1.2) * 5);
+
+    pop();
+
+    // 前脚（顔の下に）
+    fill(65, 60, 78);
+    ellipse(s * 0.4, -s * 0.15 + sleepBreath, s * 0.25, s * 0.12);
+  }
+
+  drawStretching(s, breathOffset) {
+    let phase = constrain(this.stretchPhase, 0, 1);
+    let stretchAmount = sin(phase * PI) * 0.4;
+
+    noStroke();
+
+    // しっぽ（ピンと立つ）
+    this.drawTail(s, breathOffset);
+
+    // 胴体（伸びる）
+    fill(70, 65, 82);
+    let bodyW = s * 1.3 * (1 + stretchAmount * 0.3);
+    let bodyH = s * 0.8 * (1 - stretchAmount * 0.2);
+    let bodyY = -s * 0.45 + breathOffset - stretchAmount * s * 0.2;
+    ellipse(0, bodyY, bodyW, bodyH);
+
+    // 脚
+    fill(65, 60, 78);
+    let frontDown = stretchAmount * 15;
+    this.drawLeg(-s * 0.35, frontDown, s);
+    this.drawLeg(s * 0.0, frontDown, s);
+    this.drawLeg(-s * 0.15, 0, s);
+    this.drawLeg(s * 0.2, 0, s);
+
+    // 頭（下がる→上がる）
+    let headY = -s * 0.85 + breathOffset;
+    if (phase < 0.5) {
+      headY += stretchAmount * s * 0.5;
+    } else {
+      headY -= (stretchAmount - sin(phase * PI) * 0.2) * s * 0.3;
+    }
+
+    push();
+    translate(s * 0.35, headY);
+    this.drawHead(s);
+    pop();
+  }
+
+  drawHead(s) {
+    noStroke();
+
+    // 頭本体
+    fill(70, 65, 82);
+    ellipse(0, 0, s * 0.65, s * 0.55);
+
+    // 耳
+    let earTwitch = sin(this.earPhase * 3 + noise(this.earPhase) * 5) * 0.05;
+    fill(65, 60, 78);
+    push();
+    rotate(-0.2 + earTwitch);
+    triangle(-s * 0.15, -s * 0.15, -s * 0.3, -s * 0.42, -s * 0.02, -s * 0.3);
+    // 耳の中
+    fill(100, 75, 85);
+    triangle(-s * 0.16, -s * 0.18, -s * 0.26, -s * 0.36, -s * 0.06, -s * 0.28);
+    pop();
+
+    fill(65, 60, 78);
+    push();
+    rotate(0.15 - earTwitch);
+    triangle(s * 0.1, -s * 0.17, s * 0.0, -s * 0.44, s * 0.25, -s * 0.32);
+    fill(100, 75, 85);
+    triangle(s * 0.1, -s * 0.2, s * 0.03, -s * 0.38, s * 0.22, -s * 0.3);
+    pop();
+
+    // 目
+    if (this.isBlinking) {
+      stroke(40, 35, 50);
+      strokeWeight(2);
+      noFill();
+      line(-s * 0.1, -s * 0.02, -s * 0.02, -s * 0.02);
+      line(s * 0.06, -s * 0.02, s * 0.14, -s * 0.02);
+    } else {
+      // 目の白
+      fill(200, 195, 180);
+      noStroke();
+      ellipse(-s * 0.07, -s * 0.03, s * 0.14, s * 0.12);
+      ellipse(s * 0.1, -s * 0.03, s * 0.14, s * 0.12);
+
+      // 瞳
+      fill(45, 120, 80);
+      let pupilSize = this.state === 'lookAround' ? s * 0.09 : s * 0.07;
+      let lookX = this.state === 'lookAround' ? sin(t * 2) * s * 0.02 : 0;
+      ellipse(-s * 0.07 + lookX, -s * 0.03, pupilSize, s * 0.1);
+      ellipse(s * 0.1 + lookX, -s * 0.03, pupilSize, s * 0.1);
+
+      // 瞳孔
+      fill(20, 18, 25);
+      let slitW = map(sin(t * 0.5), -1, 1, s * 0.02, s * 0.04);
+      ellipse(-s * 0.07 + lookX, -s * 0.03, slitW, s * 0.08);
+      ellipse(s * 0.1 + lookX, -s * 0.03, slitW, s * 0.08);
+
+      // 目の光
+      fill(255, 255, 255, 180);
+      ellipse(-s * 0.09, -s * 0.06, s * 0.03, s * 0.03);
+      ellipse(s * 0.08, -s * 0.06, s * 0.03, s * 0.03);
+    }
+
+    // 鼻
+    fill(120, 85, 90);
+    noStroke();
+    triangle(s * 0.01, s * 0.06, -s * 0.025, s * 0.09, s * 0.045, s * 0.09);
+
+    // 口
+    stroke(60, 50, 65);
+    strokeWeight(1.2);
+    noFill();
+    arc(-s * 0.01, s * 0.11, s * 0.06, s * 0.04, -PI * 0.1, PI * 0.6);
+    arc(s * 0.03, s * 0.11, s * 0.06, s * 0.04, PI * 0.4, PI * 1.1);
+
+    // ヒゲ
+    stroke(160, 155, 145, 150);
+    strokeWeight(0.8);
+    let whiskerWave = sin(t * 1.5) * 2;
+    // 左
+    line(-s * 0.2, s * 0.05 + whiskerWave, -s * 0.45, s * 0.0);
+    line(-s * 0.2, s * 0.08, -s * 0.47, s * 0.07 + whiskerWave);
+    line(-s * 0.18, s * 0.11 - whiskerWave, -s * 0.43, s * 0.15);
+    // 右
+    line(s * 0.22, s * 0.05 + whiskerWave, s * 0.47, s * 0.0);
+    line(s * 0.22, s * 0.08, s * 0.49, s * 0.07 + whiskerWave);
+    line(s * 0.2, s * 0.11 - whiskerWave, s * 0.45, s * 0.15);
+  }
+
+  drawTail(s, breathOffset) {
+    noFill();
+    stroke(70, 65, 82);
+    strokeWeight(s * 0.15);
+
+    let tailWave1 = sin(this.tailPhase * 1.2) * 20;
+    let tailWave2 = sin(this.tailPhase * 0.8 + 1) * 15;
+    let tailUp = this.state === 'walk' ? -20 : -5;
+
+    let baseX = -s * 0.5;
+    let baseY = -s * 0.45 + breathOffset;
+
+    beginShape();
+    noFill();
+    curveVertex(baseX, baseY);
+    curveVertex(baseX, baseY);
+    curveVertex(baseX - s * 0.3, baseY + tailUp + tailWave1 * 0.3);
+    curveVertex(baseX - s * 0.5, baseY + tailUp - s * 0.2 + tailWave1);
+    curveVertex(baseX - s * 0.4, baseY + tailUp - s * 0.5 + tailWave2);
+    curveVertex(baseX - s * 0.4, baseY + tailUp - s * 0.5 + tailWave2);
+    endShape();
+
+    // しっぽの先（少し丸く）
+    fill(70, 65, 82);
+    noStroke();
+    let tipX = baseX - s * 0.4;
+    let tipY = baseY + tailUp - s * 0.5 + tailWave2;
+    ellipse(tipX, tipY, s * 0.15, s * 0.15);
+  }
+
+  drawNuzzle(s, breathOffset) {
+    // スリスリ: 体を左右に揺らしながら窓にすりつく
+    let sway = sin(this.nuzzlePhase * 2) * 8;
+    let headSway = sin(this.nuzzlePhase * 2 + 0.5) * 12;
+
+    noStroke();
+
+    // しっぽ（嬉しくてピンと立つ + ゆらゆら）
+    noFill();
+    stroke(70, 65, 82);
+    strokeWeight(s * 0.15);
+    let tailWave = sin(this.nuzzlePhase * 3) * 25;
+    let baseX = -s * 0.5 + sway * 0.3;
+    let baseY = -s * 0.45 + breathOffset;
+    beginShape();
+    noFill();
+    curveVertex(baseX, baseY);
+    curveVertex(baseX, baseY);
+    curveVertex(baseX - s * 0.2, baseY - s * 0.3 + tailWave * 0.3);
+    curveVertex(baseX - s * 0.15, baseY - s * 0.6 + tailWave);
+    curveVertex(baseX - s * 0.1, baseY - s * 0.75 + tailWave * 0.5);
+    curveVertex(baseX - s * 0.1, baseY - s * 0.75 + tailWave * 0.5);
+    endShape();
+
+    noStroke();
+
+    // 脚
+    fill(55, 50, 65);
+    this.drawLeg(-s * 0.2 + sway * 0.2, 0, s);
+    this.drawLeg(s * 0.15 + sway * 0.2, 0, s);
+
+    // 胴体（少し揺れる）
+    fill(70, 65, 82);
+    let bodyY = -s * 0.45 + breathOffset;
+    push();
+    translate(sway * 0.5, 0);
+    ellipse(0, bodyY, s * 1.3, s * 0.8);
+    fill(85, 80, 95);
+    ellipse(-s * 0.05, bodyY + s * 0.08, s * 0.7, s * 0.5);
+    pop();
+
+    // 前脚
+    fill(65, 60, 78);
+    this.drawLeg(-s * 0.3 + sway * 0.3, 0, s);
+    this.drawLeg(s * 0.05 + sway * 0.3, 0, s);
+
+    // 頭（大きく揺れる = すりすり）
+    let headX = s * 0.35 + headSway;
+    let headY = -s * 0.85 + breathOffset + abs(sin(this.nuzzlePhase * 2)) * 5;
+    push();
+    translate(headX, headY);
+    rotate(sin(this.nuzzlePhase * 2) * 0.15 * this.dir);
+    this.drawHead(s);
+
+    // 目を細める（嬉しい）
+    noStroke();
+    fill(70, 65, 82);
+    // 目の上半分を覆って細目にする
+    rect(-s * 0.15, -s * 0.1, s * 0.35, s * 0.06, 2);
+    pop();
+
+    // ハートエフェクト（興味度が高いとき）
+    if (this.interest > 0.3) {
+      this.drawHeart(headX + s * 0.3, headY - s * 0.3);
+    }
+  }
+
+  drawHeart(hx, hy) {
+    let pulse = 1 + sin(t * 4) * 0.15;
+    let alpha = map(this.interest, 0.3, 1, 50, 200);
+    push();
+    translate(hx * this.dir, hy); // dir補正
+    scale(pulse);
+    fill(200, 80, 100, alpha);
+    noStroke();
+    beginShape();
+    vertex(0, -3);
+    bezierVertex(-5, -10, -12, -3, 0, 6);
+    vertex(0, -3);
+    bezierVertex(5, -10, 12, -3, 0, 6);
+    endShape(CLOSE);
+    pop();
+  }
+
+  drawLeg(offsetX, walkOffset, s) {
+    let legTop = -s * 0.15;
+    let legBot = 0;
+    let footX = offsetX + walkOffset;
+    let kneeX = offsetX + walkOffset * 0.3;
+
+    // 脚
+    strokeWeight(s * 0.12);
+    stroke(65, 60, 78);
+    line(kneeX, legTop, footX, legBot);
+
+    // 足先（肉球感）
+    noStroke();
+    fill(60, 55, 72);
+    ellipse(footX, legBot, s * 0.14, s * 0.08);
+  }
+}
+
+function mousePressed() {
+  cat.reactToClick(mouseX, mouseY);
+}
+
+function doubleClicked() {
+  cat.jump();
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  cat.minX = WINDOW_MARGIN + 100;
+  cat.maxX = width - WINDOW_MARGIN - 100;
+}
+</script>
+</body>
+</html>
