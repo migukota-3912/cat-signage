@@ -6,37 +6,25 @@
 *.pyc
 __pycache__/
 
-# PPTX（資料はgitに上げない）
-*.pptx
+# ローカル専用フォルダ（gitに上げない）
+scripts/
+blender/
+assets/
+docs/
 
-# Blender バックアップ
-*.blend1
-
-# スクリーンショット・動画
-screenshot/
-*.mov
-
-# Blenderプロジェクト（バイナリ大容量）
-*.blend
-
-# 中間素材（生成・参照用）
-multiview/
-parts/
-tpose/
-
-# Mixamoアニメーション素材（FBX）
-Action/
-cat_for_mixamo.fbx
-
-# 3D中間生成物（不要なフォーマット・重複）
+# 3D中間生成物（デモに不要なGLB）
+3d_output/cat_meshy*
+3d_output/cat_mv_model.glb
+3d_output/cat_mv_anim_*_armature_glb.glb
+3d_output/cat_rodin.glb
+3d_output/cat_triposr.glb
+3d_output/cat_v5_*
 3d_output/*.fbx
 3d_output/*.obj
 3d_output/*.stl
 3d_output/*.usdz
 3d_output/*.png
-3d_output/cat_rodin.glb
-3d_output/cat_triposr.glb
-3d_output/cat_v5_multi_model.glb
-3d_output/cat_meshy.fbx
-3d_output/cat_meshy.glb
-3d_output/cat_meshy_model.glb
+
+# その他バイナリ
+*.mov
+*.pdf
