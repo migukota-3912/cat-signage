@@ -2,10 +2,12 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>猫サイネージ v3 — Mixamoアニメーション</title>
 <style>
   * { margin: 0; padding: 0; }
-  body { background: #0a0a15; overflow: hidden; cursor: pointer; }
+  html, body { width: 100%; height: 100%; }
+  body { background: #0a0a15; overflow: hidden; cursor: pointer; touch-action: none; }
   #info {
     position: fixed; bottom: 10px; left: 10px;
     color: #444; font: 10px monospace; z-index: 10;
@@ -14,10 +16,18 @@
     position: fixed; top: 10px; left: 10px;
     color: #D4A537; font: 14px monospace; z-index: 10;
   }
+  #loading {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: #D4A537; font: 16px 'Zen Kaku Gothic New', sans-serif; z-index: 100;
+    text-align: center;
+  }
+  #loading .spinner { font-size: 32px; animation: spin 1.5s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
-<div id="info">click: 近づく / space: ジャンプ / dblclick: 手を振る</div>
+<div id="loading"><div class="spinner">🐱</div><br>読み込み中...</div>
+<div id="info">tap: 近づく / double tap: 手を振る / long press: ジャンプ</div>
 <div id="state"></div>
 
 <script type="importmap">
@@ -211,6 +221,10 @@ async function loadCat() {
   // 開始
   playAnim('Orc Idle');
   nextState();
+
+  // ローディング非表示
+  const el = document.getElementById('loading');
+  if (el) el.remove();
 }
 loadCat();
 
@@ -489,6 +503,27 @@ addEventListener('dblclick', () => {
   c.targetRotY = faceAngle;
   playAnim(pick, 0.3);
 });
+
+// ロングタップでジャンプ（モバイル対応）
+let longPressTimer = null;
+addEventListener('touchstart', (e) => {
+  longPressTimer = setTimeout(() => {
+    if (!cat.isJumping) {
+      cat.isJumping = true;
+      cat.jumpVel = -4;
+      cat.isSitting = false;
+      cat.isLying = false;
+      playAnim('Jump', 0.2);
+    }
+    longPressTimer = null;
+  }, 500);
+}, { passive: true });
+addEventListener('touchend', () => {
+  if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+});
+addEventListener('touchmove', () => {
+  if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+}, { passive: true });
 
 // 右クリックメニュー無効化
 addEventListener('contextmenu', (e) => e.preventDefault());
