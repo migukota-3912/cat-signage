@@ -28,3 +28,22 @@ docs/
 # その他バイナリ
 *.mov
 *.pdf
+
+# 秘匿情報
+.env
+
+# GRU検証・開発用（デモに不要）
+blend_weights*.json
+gru_motions.json
+cat_blend*.html
+cat_gru.html
+cat_hybrid.html
+cat_procedural.html
+cat_v7.html
+test_breathing.html
+anim_config.json
+server_cat.py
+ml/
+
+# 旧GLB
+cat_signage_v2.glb

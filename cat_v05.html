@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preload" href="cat_signage_v3.glb" as="fetch" crossorigin>
+<title>cat signage v0.5</title>
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; }
+  body { background: #0a0a15; overflow: hidden; cursor: pointer; touch-action: none;
+         -webkit-user-select: none; user-select: none; }
+  #state {
+    position: fixed; top: 10px; left: 10px;
+    color: #D4A537; font: 13px monospace; z-index: 10;
+    white-space: pre; line-height: 1.4;
+    pointer-events: none;
+  }
+  #info {
+    position: fixed; bottom: 10px; left: 10px;
+    color: #444; font: 10px monospace; z-index: 10;
+    pointer-events: none;
+  }
+  #loading {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: #D4A537; font: 16px sans-serif; z-index: 100;
+    text-align: center;
+  }
+  #loading .spinner { font-size: 32px; animation: spin 1.5s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 768px) {
+    #state { font: 11px monospace; }
+    #info { font: 9px monospace; }
+  }
+</style>
+</head>
+<body>
+<div id="loading"><div class="spinner">🐱</div><br>読み込み中...</div>
+<div id="info">click: 移動 / dblclick: 手を振る / space: ジャンプ</div>
+<div id="state"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+// ===== アニメーション設定（スタンドアロン、anim_config.json内蔵） =====
+const ANIM_CONFIG = {
+  categories: {
+    idle:     { posture:'standing', play_mode:'loop', anims:[{name:'Orc Idle',d:8.6},{name:'Idle',d:5.7},{name:'Standing Idle',d:8.6},{name:'Warrior Idle',d:6.3}], min:3, max:12 },
+    stretch:  { posture:'standing', play_mode:'once', anims:[{name:'Neck Stretching',d:4.3},{name:'Arm Stretching',d:7.2},{name:'Yawn',d:5.7}] },
+    walk:     { posture:'standing', play_mode:'loop', anims:[{name:'Walking',d:1.2}], min:5, max:15 },
+    run:      { posture:'standing', play_mode:'loop', anims:[{name:'Running',d:0.7}], min:3, max:10 },
+    look:     { posture:'standing', play_mode:'once', anims:[{name:'Look Around',d:9.9},{name:'Nervously Look Around',d:7.0}] },
+    greet:    { posture:'standing', play_mode:'once', anims:[{name:'Waving',d:4.0},{name:'Waving Gesture',d:1.4}] },
+    dance:    { posture:'standing', play_mode:'once', anims:[{name:'Dancing Running Man',d:10.8},{name:'Hip Hop Dancing',d:5.2}] },
+    surprise: { posture:'standing', play_mode:'once', anims:[{name:'Surprised',d:4.1},{name:'Reacting',d:3.7}] },
+    play:     { posture:'standing', play_mode:'once', anims:[{name:'Batter On Deck',d:37.3},{name:'Jump',d:2.2},{name:'Jumping',d:2.8}] },
+    sit:      { posture:'sitting',  play_mode:'pose', anims:[{name:'Sitting Idle',d:10.9},{name:'Male Sitting Pose',d:5.0},{name:'Male Sitting Pose (1)',d:5.0}], min:5, max:20 },
+    lie:      { posture:'lying',    play_mode:'pose', anims:[{name:'Male Laying Pose',d:5.0},{name:'Male Laying Pose (1)',d:5.0}], min:8, max:25 },
+  },
+  markov: {
+    idle:     {idle:0.10, stretch:0.25, walk:0.20, look:0.25, sit:0.08, greet:0.05, surprise:0.05, run:0.02},
+    stretch:  {idle:0.25, look:0.30, walk:0.20, sit:0.15, lie:0.10},
+    walk:     {idle:0.10, look:0.30, walk:0.05, run:0.15, stretch:0.15, sit:0.10, greet:0.10, surprise:0.05},
+    run:      {walk:0.35, idle:0.15, look:0.15, stretch:0.15, surprise:0.10, play:0.10},
+    look:     {idle:0.15, walk:0.25, stretch:0.15, look:0.05, sit:0.10, greet:0.15, surprise:0.10, run:0.05},
+    greet:    {idle:0.20, look:0.25, walk:0.25, stretch:0.15, dance:0.15},
+    dance:    {idle:0.20, stretch:0.25, walk:0.20, look:0.15, sit:0.10, play:0.10},
+    surprise: {look:0.35, idle:0.15, run:0.20, walk:0.15, stretch:0.15},
+    play:     {idle:0.20, stretch:0.25, walk:0.20, look:0.15, sit:0.10, dance:0.10},
+    sit:      {idle:0.20, stretch:0.30, look:0.25, walk:0.15, lie:0.10},
+    lie:      {stretch:0.35, idle:0.20, sit:0.20, look:0.20, lie:0.05},
+  },
+  moodBias: {
+    relaxed: {stretch:1.5, sit:1.3, lie:1.2, run:0.3, dance:0.2},
+    curious: {look:2.0, walk:1.5, greet:1.3, sit:0.3, lie:0.2},
+    playful: {run:2.0, dance:2.0, play:2.0, walk:1.5, sit:0.2, lie:0.1},
+    sleepy:  {sit:2.0, lie:2.0, stretch:1.8, run:0.1, dance:0.1, play:0.1},
+  }
+};
+
+const CROSSFADE = 1.0;
+
+// ===== シーン =====
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x2D7DD2);
+scene.fog = new THREE.Fog(0x2D7DD2, 15, 40);
+
+const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 4, 14);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0x334466, 0.5));
+const mainLight = new THREE.DirectionalLight(0xffeedd, 1.5);
+mainLight.position.set(3, 6, 4);
+mainLight.castShadow = true;
+mainLight.shadow.mapSize.set(2048, 2048);
+mainLight.shadow.camera.near = 0.1;
+mainLight.shadow.camera.far = 20;
+mainLight.shadow.camera.left = -10;
+mainLight.shadow.camera.right = 10;
+mainLight.shadow.camera.top = 10;
+mainLight.shadow.camera.bottom = -10;
+scene.add(mainLight);
+scene.add(new THREE.DirectionalLight(0x4466ff, 0.7).translateX(-3).translateY(3).translateZ(-4));
+scene.add(new THREE.PointLight(0xffffff, 0.3, 10).translateZ(5).translateY(1));
+
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(30, 30),
+  new THREE.MeshStandardMaterial({ color: 0xE91E8C, roughness: 0.6, metalness: 0.1 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+const reflection = new THREE.Mesh(
+  new THREE.CircleGeometry(1.5, 32),
+  new THREE.MeshBasicMaterial({ color: 0xC0185A, transparent: true, opacity: 0.2 })
+);
+reflection.rotation.x = -Math.PI / 2;
+reflection.position.y = 0.01;
+scene.add(reflection);
+
+// パーティクル
+const pCount = 50;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(pCount * 3);
+const pVel = [];
+for (let i = 0; i < pCount; i++) {
+  pPos[i*3] = (Math.random()-0.5)*12; pPos[i*3+1] = Math.random()*6; pPos[i*3+2] = (Math.random()-0.5)*12;
+  pVel.push(new THREE.Vector3((Math.random()-0.5)*0.003,(Math.random()-0.5)*0.002,(Math.random()-0.5)*0.003));
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+scene.add(new THREE.Points(pGeo, new THREE.PointsMaterial({color:0xffffff,size:0.04,transparent:true,opacity:0.2})));
+
+// ===== 状態 =====
+const allActions = {};
+let currentAction = null, currentCategory = 'idle', currentPosture = 'standing';
+let actionTimer = 0, actionDuration = 5;
+let currentMood = 'relaxed';
+const catState = { posX:0, posZ:0, rotY:0, targetRotY:0, moving:false, targetX:0, targetZ:0 };
+let catModel = null, catMixer = null, catScale = 1, catBaseY = 0;
+let actionHistory = [];
+
+// ===== モデル =====
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+const loader = new GLTFLoader();
+loader.setDRACOLoader(dracoLoader);
+
+async function loadCat() {
+  const gltf = await new Promise((resolve, reject) => {
+    loader.load('cat_signage_v3.glb', resolve,
+      (p) => { if (p.total) { const el = document.getElementById('loading'); if (el) el.innerHTML = `<div class="spinner">🐱</div><br>${Math.round(p.loaded/p.total*100)}%`; }},
+      reject);
+  });
+  catModel = gltf.scene;
+  const bbox = new THREE.Box3().setFromObject(catModel);
+  catScale = 1.8 / bbox.getSize(new THREE.Vector3()).y;
+  catModel.scale.set(catScale, catScale, catScale);
+  catBaseY = -new THREE.Box3().setFromObject(catModel).min.y;
+  catModel.position.y = catBaseY;
+  catModel.traverse(c => { if (c.isMesh || c.isSkinnedMesh) { c.castShadow = true; c.receiveShadow = true; }});
+  scene.add(catModel);
+
+  catMixer = new THREE.AnimationMixer(catModel);
+  for (const clip of gltf.animations) {
+    for (const track of clip.tracks) {
+      if (track.name.includes('Hips') && track.name.endsWith('.position')) {
+        const v = track.values; for (let i = 0; i < v.length; i += 3) { v[i] = 0; v[i+2] = 0; }
+      }
+    }
+    allActions[clip.name] = catMixer.clipAction(clip);
+  }
+
+  // 接地位置をidle基準で計算
+  for (const name of ['Idle','Orc Idle','Standing Idle']) {
+    if (allActions[name]) {
+      const a = allActions[name]; a.reset(); a.play(); a.setEffectiveWeight(1);
+      catMixer.update(0.1);
+      catBaseY = -new THREE.Box3().setFromObject(catModel).min.y;
+      catModel.position.y = catBaseY;
+      a.stop(); break;
+    }
+  }
+
+  catMixer.addEventListener('finished', () => { if (currentAction) nextAction(); });
+}
+
+// ===== マルコフ連鎖 =====
+function nextAction() {
+  const markov = ANIM_CONFIG.markov[currentCategory] || ANIM_CONFIG.markov.idle;
+  const bias = ANIM_CONFIG.moodBias[currentMood] || {};
+
+  // ムードバイアス適用
+  const probs = {};
+  let total = 0;
+  for (const [act, prob] of Object.entries(markov)) {
+    const b = bias[act] || 1.0;
+    probs[act] = prob * b;
+    total += probs[act];
+  }
+
+  // 直前と同じカテゴリを除外
+  if (probs[currentCategory]) {
+    total -= probs[currentCategory];
+    delete probs[currentCategory];
+  }
+
+  // 座り/寝中はsit/lie除外
+  if (currentPosture === 'sitting' || currentPosture === 'lying') {
+    for (const k of ['sit','lie']) {
+      if (probs[k]) { total -= probs[k]; delete probs[k]; }
+    }
+  }
+
+  // 直前3回に含まれるカテゴリの確率を下げる
+  const recent = actionHistory.slice(-3);
+  for (const r of recent) {
+    if (probs[r]) { total -= probs[r] * 0.7; probs[r] *= 0.3; }
+  }
+
+  // 選択
+  let r = Math.random() * total;
+  let chosen = 'idle';
+  for (const [act, prob] of Object.entries(probs)) {
+    r -= prob;
+    if (r <= 0) { chosen = act; break; }
+  }
+
+  // 履歴記録
+  actionHistory.push(chosen);
+  if (actionHistory.length > 10) actionHistory.shift();
+
+  const catInfo = ANIM_CONFIG.categories[chosen];
+  let dur = 0;
+  if (catInfo.play_mode === 'loop' || catInfo.play_mode === 'pose') {
+    dur = (catInfo.min || 3) + Math.random() * ((catInfo.max || 10) - (catInfo.min || 3));
+  }
+
+  playCategory(chosen, dur);
+}
+
+// ===== アニメーション切り替え =====
+function playCategory(category, duration) {
+  const catInfo = ANIM_CONFIG.categories[category];
+  if (!catInfo) return;
+
+  const posture = catInfo.posture;
+  const playMode = catInfo.play_mode;
+
+  // 同じloop/poseが続く場合はdurationだけ更新
+  if (category === currentCategory && (playMode === 'loop' || playMode === 'pose') && currentAction) {
+    actionDuration = duration > 0 ? duration : (catInfo.min||3) + Math.random()*((catInfo.max||10)-(catInfo.min||3));
+    actionTimer = 0;
+    return;
+  }
+
+  // アニメーション選択（duration>0優先）
+  const valid = catInfo.anims.filter(a => a.d > 0 && allActions[a.name]);
+  const chosen = valid.length > 0 ? valid[Math.floor(Math.random()*valid.length)]
+    : catInfo.anims.find(a => allActions[a.name]);
+  if (!chosen) return;
+
+  const newAction = allActions[chosen.name];
+
+  if (playMode === 'loop' || playMode === 'pose') {
+    newAction.setLoop(THREE.LoopRepeat);
+  } else {
+    newAction.setLoop(THREE.LoopOnce);
+    newAction.clampWhenFinished = true;
+  }
+  newAction.timeScale = 1;
+
+  const fadeDur = (posture !== currentPosture) ? CROSSFADE * 1.5 : CROSSFADE;
+
+  if (currentAction && currentAction !== newAction) {
+    newAction.reset(); newAction.setEffectiveWeight(1); newAction.play();
+    currentAction.crossFadeTo(newAction, fadeDur, false);
+  } else if (!currentAction) {
+    newAction.reset(); newAction.setEffectiveWeight(1); newAction.play();
+  }
+
+  currentAction = newAction;
+  currentCategory = category;
+  currentPosture = posture;
+
+  if (playMode === 'once' && duration <= 0) {
+    actionDuration = chosen.d || 5;
+  } else if (duration > 0) {
+    actionDuration = duration;
+  } else {
+    actionDuration = (catInfo.min||3) + Math.random()*((catInfo.max||10)-(catInfo.min||3));
+  }
+  actionTimer = 0;
+}
+
+// ===== 移動 =====
+function updateMovement(dt) {
+  const c = catState;
+  if (currentPosture === 'standing') {
+    const isMoving = currentCategory === 'walk' || currentCategory === 'run';
+    if (isMoving && !c.moving) {
+      c.moving = true;
+      c.targetX = (Math.random()-0.5)*8;
+      c.targetZ = Math.random()*7 - 4;
+    }
+    if (!isMoving) c.moving = false;
+
+    if (c.moving) {
+      const dx = c.targetX-c.posX, dz = c.targetZ-c.posZ;
+      const dist = Math.sqrt(dx*dx+dz*dz);
+      const speed = currentCategory === 'run' ? 2.5 : 1.2;
+      if (dist < 0.15) {
+        c.targetX = (Math.random()-0.5)*8;
+        c.targetZ = Math.random()*7 - 4;
+      } else {
+        c.posX += (dx/dist)*speed*dt;
+        c.posZ += (dz/dist)*speed*dt;
+        c.targetRotY = Math.atan2(dx, dz);
+      }
+    }
+  }
+
+  // 手前を向きやすくする
+  if (!c.moving && Math.abs(c.targetRotY) > Math.PI*0.5) {
+    if (Math.random() < 0.02) c.targetRotY = (Math.random()-0.5)*Math.PI*0.8;
+  }
+
+  let ad = c.targetRotY - c.rotY;
+  while (ad > Math.PI) ad -= Math.PI*2;
+  while (ad < -Math.PI) ad += Math.PI*2;
+  c.rotY += ad * dt * 3;
+
+  if (catModel) {
+    catModel.position.x = c.posX;
+    catModel.position.z = c.posZ;
+    catModel.rotation.y = c.rotY;
+    catModel.position.y = catBaseY;
+    const breath = Math.sin(performance.now()*0.002)*0.003;
+    catModel.scale.set(catScale+breath, catScale, catScale+breath);
+    reflection.position.x = c.posX;
+    reflection.position.z = c.posZ;
+  }
+}
+
+// ===== メインループ =====
+const clock = new THREE.Clock();
+const MOOD_LABELS = {relaxed:'リラックス',curious:'きょろきょろ',playful:'あそびたい',sleepy:'ねむい'};
+const CAT_LABELS = {idle:'たたずむ',stretch:'のび',walk:'あるく',run:'はしる',look:'みる',greet:'あいさつ',dance:'おどる',surprise:'びっくり',play:'あそぶ',sit:'すわる',lie:'ねる'};
+const MOOD_LIST = ['relaxed','curious','playful','sleepy'];
+let moodTimer = 0, moodDuration = 15 + Math.random()*20;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // ムード自動切り替え
+  moodTimer += dt;
+  if (moodTimer > moodDuration) {
+    moodTimer = 0;
+    moodDuration = 15 + Math.random()*25;
+    const candidates = MOOD_LIST.filter(m => m !== currentMood);
+    currentMood = candidates[Math.floor(Math.random()*candidates.length)];
+  }
+
+  // アクションタイマー
+  actionTimer += dt;
+  const catInfo = ANIM_CONFIG.categories[currentCategory];
+  const pm = catInfo?.play_mode || 'once';
+  if ((pm === 'loop' || pm === 'pose') && actionTimer >= actionDuration) nextAction();
+  if (pm === 'once' && actionTimer >= actionDuration + 2) nextAction();
+
+  updateMovement(dt);
+  if (catMixer) catMixer.update(dt);
+
+  // パーティクル
+  const pos = pGeo.attributes.position.array;
+  for (let i = 0; i < pCount; i++) {
+    pos[i*3]+=pVel[i].x; pos[i*3+1]+=pVel[i].y; pos[i*3+2]+=pVel[i].z;
+    if(Math.abs(pos[i*3])>6)pVel[i].x*=-1;
+    if(pos[i*3+1]>6||pos[i*3+1]<0)pVel[i].y*=-1;
+    if(Math.abs(pos[i*3+2])>6)pVel[i].z*=-1;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+
+  camera.lookAt(0, 0.5, -1);
+  renderer.render(scene, camera);
+
+  // デバッグ表示
+  document.getElementById('state').textContent =
+    `mood: ${MOOD_LABELS[currentMood]}  action: ${CAT_LABELS[currentCategory]||currentCategory}  [${Math.round(actionTimer)}/${Math.round(actionDuration)}s]`;
+}
+
+// ===== 初期化 =====
+loadCat().then(() => {
+  document.getElementById('loading')?.remove();
+  playCategory('idle', 5);
+  setTimeout(() => nextAction(), 3000);
+  animate();
+});
+
+// ===== イベント =====
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+addEventListener('keydown', (e) => {
+  const mm = {'1':'relaxed','2':'curious','3':'playful','4':'sleepy'};
+  if (mm[e.key]) { currentMood = mm[e.key]; moodTimer = 0; nextAction(); }
+  if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); playCategory('play', 0); }
+});
+
+// クリック → 移動
+let clickTimer = null;
+addEventListener('click', (e) => {
+  if (clickTimer) return;
+  clickTimer = setTimeout(() => {
+    clickTimer = null;
+    const mouse = new THREE.Vector2((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(mouse, camera);
+    const hits = rc.intersectObject(floor);
+    if (hits.length > 0) {
+      catState.moving = true;
+      catState.targetX = Math.max(-6, Math.min(6, hits[0].point.x));
+      catState.targetZ = Math.max(-6, Math.min(5, hits[0].point.z));
+      if (currentCategory !== 'walk' && currentCategory !== 'run') playCategory('walk', 8);
+    }
+  }, 250);
+});
+
+// ダブルクリック → 手を振る
+addEventListener('dblclick', () => {
+  if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+  catState.targetRotY = 0; catState.moving = false;
+  playCategory('greet', 0);
+});
+
+addEventListener('contextmenu', (e) => e.preventDefault());
+
+// タッチ操作（スマホ）
+let touchStart = null, touchTimer = null;
+addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  touchStart = { x: t.clientX, y: t.clientY, time: Date.now() };
+
+  // ダブルタップ判定
+  if (touchTimer) {
+    clearTimeout(touchTimer); touchTimer = null;
+    catState.targetRotY = 0; catState.moving = false;
+    playCategory('greet', 0);
+    return;
+  }
+  touchTimer = setTimeout(() => {
+    touchTimer = null;
+    // シングルタップ → 移動
+    if (touchStart) {
+      const mouse = new THREE.Vector2((touchStart.x/innerWidth)*2-1, -(touchStart.y/innerHeight)*2+1);
+      const rc = new THREE.Raycaster();
+      rc.setFromCamera(mouse, camera);
+      const hits = rc.intersectObject(floor);
+      if (hits.length > 0) {
+        catState.moving = true;
+        catState.targetX = Math.max(-6, Math.min(6, hits[0].point.x));
+        catState.targetZ = Math.max(-6, Math.min(5, hits[0].point.z));
+        if (currentCategory !== 'walk' && currentCategory !== 'run') playCategory('walk', 8);
+      }
+    }
+  }, 300);
+}, { passive: true });
+</script>
+</body>
+</html>
